@@ -117,7 +117,12 @@ fn emit_message(name: &str, schema: &Schema, out: &mut String, imports: &mut BTr
     out.push_str(&format!("message {name} {{\n"));
     for (i, (prop, pschema)) in schema.properties.iter().enumerate() {
         let (label, ty) = field_type(pschema, imports);
-        out.push_str(&format!("  {label}{ty} {} = {};\n", prop.to_snake_case(), i + 1));
+        // OpenAPI `nullable: true` → proto3 `optional` (field presence). Without
+        // it a scalar field rejects a JSON `null` (pbjson: "invalid type: null,
+        // expected a string"); `optional` makes the wire value Option<T>, so null
+        // round-trips as None. `optional` is illegal on `repeated`, so skip there.
+        let presence = if pschema.nullable && label.is_empty() { "optional " } else { "" };
+        out.push_str(&format!("  {presence}{label}{ty} {} = {};\n", prop.to_snake_case(), i + 1));
     }
     out.push_str("}\n\n");
 }
@@ -402,6 +407,33 @@ components:
     BandSpec: { type: object, properties: { setpoint: { type: number } } }
     Band: { type: object, properties: { kind: { type: string } } }
 "##;
+
+    #[test]
+    fn nullable_field_becomes_proto3_optional() {
+        let spec_src = r##"
+openapi: 3.0.3
+info: { title: t, version: 0.1.0 }
+paths: {}
+components:
+  schemas:
+    DimensionSpec:
+      type: object
+      properties:
+        id: { type: string }
+        upstreamMirror: { type: string, nullable: true }
+        tags: { type: array, items: { type: string }, nullable: true }
+"##;
+        let spec: OpenApiSpec = serde_yaml_ng::from_str(spec_src).unwrap();
+        let p = emit(&spec, "x.v1");
+        // nullable scalar → `optional` (presence: pbjson maps JSON null → None).
+        assert!(p.contains("optional string upstream_mirror ="));
+        // non-nullable scalar → no `optional`.
+        assert!(p.contains("string id ="));
+        assert!(!p.contains("optional string id"));
+        // `optional` is illegal on `repeated` → nullable array stays plain repeated.
+        assert!(p.contains("repeated string tags ="));
+        assert!(!p.contains("optional repeated"));
+    }
 
     #[test]
     fn path_level_params_merge_into_request_messages() {
