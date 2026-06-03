@@ -7,7 +7,7 @@
 use std::collections::BTreeSet;
 
 use heck::{ToShoutySnakeCase, ToSnakeCase, ToUpperCamelCase};
-use sekkei::{ref_name, OpenApiSpec, Schema};
+use sekkei::{ref_name, OpenApiSpec, Operation, Parameter, Schema};
 
 /// Emit a complete `.proto` for `spec` under `package` (e.g. `breathe.v1`).
 #[must_use]
@@ -163,21 +163,47 @@ pub fn rpc_signatures(spec: &OpenApiSpec) -> Vec<RpcSig> {
         .collect()
 }
 
+/// Path-level parameters apply to every operation under the path; operation-level
+/// parameters override them on `(name, location)`. OpenAPI lets a spec declare
+/// shared path params once at the path-item level (DRY); merge them so each
+/// synthesized request message carries every addressing field — without this,
+/// a path like `/bands/{kind}/{namespace}/{name}` whose params live at the
+/// path-item level yields an EMPTY request message (the operation can't be
+/// addressed). The merge is the faithful reading of the OpenAPI parameter
+/// inheritance rule.
+fn merged_params<'a>(spec: &'a OpenApiSpec, path: &str, op: &'a Operation) -> Vec<&'a Parameter> {
+    let mut out: Vec<&Parameter> = Vec::new();
+    if let Some(item) = spec.paths.get(path) {
+        for p in &item.parameters {
+            out.push(p);
+        }
+    }
+    for p in &op.parameters {
+        // operation-level overrides path-level on the same (name, location).
+        if let Some(slot) = out.iter_mut().find(|x| x.name == p.name && x.location == p.location) {
+            *slot = p;
+        } else {
+            out.push(p);
+        }
+    }
+    out
+}
+
 /// Emit the service + the synthesized request/response messages for each operation.
 fn emit_service(spec: &OpenApiSpec, package: &str, out: &mut String, imports: &mut BTreeSet<String>) {
     let service = service_name(package);
     let mut rpcs = String::new();
     let mut messages = String::new();
 
-    for (_method, _path, op) in spec.all_operations() {
+    for (_method, path, op) in spec.all_operations() {
         let Some(op_id) = &op.operation_id else { continue };
         let rpc = op_id.to_upper_camel_case();
 
-        // request message: path/query params + body.
+        // request message: path/query params (path-level + operation-level) + body.
         let req_name = format!("{rpc}Request");
         let mut field_no = 0usize;
         let mut req_fields = String::new();
-        for p in &op.parameters {
+        for p in merged_params(spec, &path, op) {
             if matches!(p.location.as_str(), "path" | "query") {
                 let sch = p.schema.clone().unwrap_or_default();
                 let (label, ty) = field_type(&sch, imports);
@@ -347,5 +373,48 @@ components:
         // Band.spec is an inline object → Struct → the import is present
         assert!(p.contains("import \"google/protobuf/struct.proto\";"));
         assert!(p.contains("google.protobuf.Struct spec ="));
+    }
+
+    // A path that declares its addressing params ONCE at the path-item level
+    // (DRY) — the breathe pattern. The synthesized request must carry them.
+    const PATH_LEVEL_SPEC: &str = r##"
+openapi: 3.0.3
+info: { title: t, version: 0.1.0 }
+paths:
+  /api/v1/bands/{kind}/{namespace}/{name}:
+    parameters:
+      - { name: kind, in: path, required: true, schema: { $ref: "#/components/schemas/BandKind" } }
+      - { name: namespace, in: path, required: true, schema: { type: string } }
+      - { name: name, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: bandGet
+      responses:
+        "200": { content: { application/json: { schema: { $ref: "#/components/schemas/Band" } } } }
+    patch:
+      operationId: bandPatch
+      requestBody:
+        content: { application/json: { schema: { $ref: "#/components/schemas/BandSpec" } } }
+      responses:
+        "200": { content: { application/json: { schema: { $ref: "#/components/schemas/Band" } } } }
+components:
+  schemas:
+    BandKind: { type: string, enum: [memory, arc] }
+    BandSpec: { type: object, properties: { setpoint: { type: number } } }
+    Band: { type: object, properties: { kind: { type: string } } }
+"##;
+
+    #[test]
+    fn path_level_params_merge_into_request_messages() {
+        let spec: OpenApiSpec = serde_yaml_ng::from_str(PATH_LEVEL_SPEC).unwrap();
+        let p = emit(&spec, "breathe.v1");
+        // GET: request carries the three path-level addressing fields (typed kind).
+        assert!(p.contains("message BandGetRequest {"));
+        assert!(p.contains("BandKind kind = 1;"));
+        assert!(p.contains("string namespace = 2;"));
+        assert!(p.contains("string name = 3;"));
+        // PATCH: path-level params PLUS the body, numbered after the params.
+        assert!(p.contains("message BandPatchRequest {"));
+        assert!(p.contains("BandSpec body = 4;"));
+        assert!(p.contains("rpc BandPatch(BandPatchRequest) returns (Band);"));
     }
 }
