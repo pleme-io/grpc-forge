@@ -1,9 +1,11 @@
 //! grpc-forge — generate typed Rust tonic gRPC servers from OpenAPI specs.
 //!
 //! Sibling of mcp-forge in the forge-gen ecosystem: forge-gen orchestrates it for
-//! the `grpc` target. v0.1 emits the typed `.proto` (the faithful OpenAPI→proto3
-//! mapping in [`proto`]); the tonic crate scaffold (Cargo + build.rs + lib with
-//! the service trait + handler stub) lands next.
+//! the `grpc` target. It emits the typed `.proto` (the faithful OpenAPI→proto3
+//! mapping in [`proto`]) plus a compilable tonic crate scaffold (Cargo + build.rs
+//! + lib with the service trait + a ready-to-run handler stub, in [`scaffold`]).
+//! By default the messages are serde-capable (pbjson) so a `serde_json::Value`
+//! data layer bridges to typed gRPC for free; `--no-serde` emits a prost-only crate.
 
 use std::path::{Path, PathBuf};
 
@@ -37,6 +39,11 @@ enum Command {
         /// Project name override (defaults to spec `info.title`, snake-cased).
         #[arg(long)]
         name: Option<String>,
+        /// Emit a minimal prost-only crate (no pbjson serde impls). By default
+        /// the generated messages are serde-(de)serializable so a
+        /// `serde_json::Value` data layer bridges to typed gRPC for free.
+        #[arg(long)]
+        no_serde: bool,
     },
     /// Print the generated `.proto` to stdout (for debugging).
     Proto {
@@ -74,9 +81,10 @@ fn main() -> Result<()> {
             let pkg = pkg_of(&api, &None, &package);
             print!("{}", proto::emit(&api, &pkg));
         }
-        Command::Generate { spec, output, package, name } => {
+        Command::Generate { spec, output, package, name, no_serde } => {
             let api = load(&spec)?;
             let pkg = pkg_of(&api, &name, &package);
+            let serde = !no_serde;
             let stem = pkg.split('.').next().unwrap_or("api");
             let crate_name = name.clone().unwrap_or_else(|| format!("{stem}-grpc"));
             let proto_filename = format!("{stem}.proto");
@@ -88,7 +96,7 @@ fn main() -> Result<()> {
                 .with_context(|| format!("writing proto/{proto_filename}"))?;
 
             // 2. the tonic crate scaffold (Cargo + build.rs + src/lib.rs).
-            for file in scaffold::scaffold(&api, &pkg, &crate_name, &proto_filename) {
+            for file in scaffold::scaffold(&api, &pkg, &crate_name, &proto_filename, serde) {
                 let path = output.join(&file.path);
                 if let Some(parent) = path.parent() {
                     std::fs::create_dir_all(parent).with_context(|| format!("mkdir {}", parent.display()))?;
