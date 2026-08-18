@@ -7,7 +7,7 @@
 use std::collections::BTreeSet;
 
 use heck::{ToShoutySnakeCase, ToSnakeCase, ToUpperCamelCase};
-use sekkei::{ref_name, OpenApiSpec, Operation, Parameter, Schema};
+use sekkei::{OpenApiSpec, Operation, Parameter, Schema, ref_name};
 
 /// Emit a complete `.proto` for `spec` under `package` (e.g. `breathe.v1`).
 #[must_use]
@@ -45,7 +45,10 @@ const EMPTY: &str = "google.protobuf.Empty";
 /// `"repeated "`. Records any needed well-known imports.
 fn field_type(schema: &Schema, imports: &mut BTreeSet<String>) -> (String, String) {
     if schema.is_ref() {
-        return (String::new(), ref_name(schema.ref_path.as_deref().unwrap_or("")).to_upper_camel_case());
+        return (
+            String::new(),
+            ref_name(schema.ref_path.as_deref().unwrap_or("")).to_upper_camel_case(),
+        );
     }
     if schema.is_array() {
         let inner = schema.items.as_deref().cloned().unwrap_or_default();
@@ -53,8 +56,18 @@ fn field_type(schema: &Schema, imports: &mut BTreeSet<String>) -> (String, Strin
         return (String::from("repeated "), ity);
     }
     let ty = match schema.schema_type.as_deref() {
-        Some("integer") => if schema.format.as_deref() == Some("int32") { "int32" } else { "int64" }.to_string(),
-        Some("number") => if schema.format.as_deref() == Some("float") { "float" } else { "double" }.to_string(),
+        Some("integer") => if schema.format.as_deref() == Some("int32") {
+            "int32"
+        } else {
+            "int64"
+        }
+        .to_string(),
+        Some("number") => if schema.format.as_deref() == Some("float") {
+            "float"
+        } else {
+            "double"
+        }
+        .to_string(),
         Some("string") => match schema.format.as_deref() {
             Some("byte" | "binary") => "bytes".to_string(),
             _ => "string".to_string(),
@@ -88,7 +101,9 @@ fn emit_named(name: &str, schema: &Schema, out: &mut String, imports: &mut BTree
         emit_message(&msg, schema, out, imports);
     } else if schema.is_array() {
         let (label, ity) = field_type(schema, imports);
-        out.push_str(&format!("message {msg} {{\n  {label}{ity} items = 1;\n}}\n\n"));
+        out.push_str(&format!(
+            "message {msg} {{\n  {label}{ity} items = 1;\n}}\n\n"
+        ));
     } else if schema.is_primitive() {
         let (_, ity) = field_type(schema, imports);
         out.push_str(&format!("message {msg} {{\n  {ity} value = 1;\n}}\n\n"));
@@ -106,7 +121,11 @@ fn emit_enum(name: &str, schema: &Schema, out: &mut String) {
     if let Some(values) = &schema.enum_values {
         for (i, v) in values.iter().enumerate() {
             if let Some(s) = v.as_str() {
-                out.push_str(&format!("  {prefix}_{} = {};\n", s.to_shouty_snake_case(), i + 1));
+                out.push_str(&format!(
+                    "  {prefix}_{} = {};\n",
+                    s.to_shouty_snake_case(),
+                    i + 1
+                ));
             }
         }
     }
@@ -121,8 +140,16 @@ fn emit_message(name: &str, schema: &Schema, out: &mut String, imports: &mut BTr
         // it a scalar field rejects a JSON `null` (pbjson: "invalid type: null,
         // expected a string"); `optional` makes the wire value Option<T>, so null
         // round-trips as None. `optional` is illegal on `repeated`, so skip there.
-        let presence = if pschema.nullable && label.is_empty() { "optional " } else { "" };
-        out.push_str(&format!("  {presence}{label}{ty} {} = {};\n", prop.to_snake_case(), i + 1));
+        let presence = if pschema.nullable && label.is_empty() {
+            "optional "
+        } else {
+            ""
+        };
+        out.push_str(&format!(
+            "  {presence}{label}{ty} {} = {};\n",
+            prop.to_snake_case(),
+            i + 1
+        ));
     }
     out.push_str("}\n\n");
 }
@@ -132,7 +159,11 @@ fn emit_message(name: &str, schema: &Schema, out: &mut String, imports: &mut BTr
 /// trait can never disagree.
 #[must_use]
 pub fn service_name(package: &str) -> String {
-    package.split('.').next().unwrap_or("Api").to_upper_camel_case()
+    package
+        .split('.')
+        .next()
+        .unwrap_or("Api")
+        .to_upper_camel_case()
 }
 
 /// One rpc's typed signature — the model the proto service AND the tonic handler
@@ -185,7 +216,10 @@ fn merged_params<'a>(spec: &'a OpenApiSpec, path: &str, op: &'a Operation) -> Ve
     }
     for p in &op.parameters {
         // operation-level overrides path-level on the same (name, location).
-        if let Some(slot) = out.iter_mut().find(|x| x.name == p.name && x.location == p.location) {
+        if let Some(slot) = out
+            .iter_mut()
+            .find(|x| x.name == p.name && x.location == p.location)
+        {
             *slot = p;
         } else {
             out.push(p);
@@ -195,13 +229,20 @@ fn merged_params<'a>(spec: &'a OpenApiSpec, path: &str, op: &'a Operation) -> Ve
 }
 
 /// Emit the service + the synthesized request/response messages for each operation.
-fn emit_service(spec: &OpenApiSpec, package: &str, out: &mut String, imports: &mut BTreeSet<String>) {
+fn emit_service(
+    spec: &OpenApiSpec,
+    package: &str,
+    out: &mut String,
+    imports: &mut BTreeSet<String>,
+) {
     let service = service_name(package);
     let mut rpcs = String::new();
     let mut messages = String::new();
 
     for (_method, path, op) in spec.all_operations() {
-        let Some(op_id) = &op.operation_id else { continue };
+        let Some(op_id) = &op.operation_id else {
+            continue;
+        };
         let rpc = op_id.to_upper_camel_case();
 
         // request message: path/query params (path-level + operation-level) + body.
@@ -213,7 +254,11 @@ fn emit_service(spec: &OpenApiSpec, package: &str, out: &mut String, imports: &m
                 let sch = p.schema.clone().unwrap_or_default();
                 let (label, ty) = field_type(&sch, imports);
                 field_no += 1;
-                req_fields.push_str(&format!("  {label}{ty} {} = {};\n", p.name.to_snake_case(), field_no));
+                req_fields.push_str(&format!(
+                    "  {label}{ty} {} = {};\n",
+                    p.name.to_snake_case(),
+                    field_no
+                ));
             }
         }
         if let Some(body) = op.json_body_schema() {
@@ -226,7 +271,11 @@ fn emit_service(spec: &OpenApiSpec, package: &str, out: &mut String, imports: &m
                 for (prop, pschema) in &body.properties {
                     let (label, ty) = field_type(pschema, imports);
                     field_no += 1;
-                    req_fields.push_str(&format!("  {label}{ty} {} = {};\n", prop.to_snake_case(), field_no));
+                    req_fields.push_str(&format!(
+                        "  {label}{ty} {} = {};\n",
+                        prop.to_snake_case(),
+                        field_no
+                    ));
                 }
             } else {
                 imports.insert("google/protobuf/struct.proto".into());
@@ -264,7 +313,9 @@ fn response_type(
     let resp = format!("{rpc}Response");
     if schema.is_array() {
         let (label, ity) = field_type(schema, imports);
-        messages.push_str(&format!("message {resp} {{\n  {label}{ity} items = 1;\n}}\n\n"));
+        messages.push_str(&format!(
+            "message {resp} {{\n  {label}{ity} items = 1;\n}}\n\n"
+        ));
     } else if !schema.properties.is_empty() {
         emit_message(&resp, schema, messages, imports);
     } else {

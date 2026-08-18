@@ -17,7 +17,11 @@ pub mod proto;
 pub mod scaffold;
 
 #[derive(Parser)]
-#[command(name = "grpc-forge", version, about = "Generate typed Rust tonic gRPC servers from OpenAPI specs")]
+#[command(
+    name = "grpc-forge",
+    version,
+    about = "Generate typed Rust tonic gRPC servers from OpenAPI specs"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -55,7 +59,8 @@ enum Command {
 }
 
 fn load(path: &Path) -> Result<sekkei::OpenApiSpec> {
-    let content = std::fs::read_to_string(path).with_context(|| format!("reading spec {}", path.display()))?;
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("reading spec {}", path.display()))?;
     if path.extension().is_some_and(|e| e == "json") {
         Ok(serde_json::from_str(&content)?)
     } else {
@@ -65,14 +70,19 @@ fn load(path: &Path) -> Result<sekkei::OpenApiSpec> {
 
 fn pkg_of(spec: &sekkei::OpenApiSpec, name: &Option<String>, package: &Option<String>) -> String {
     package.clone().unwrap_or_else(|| {
-        let n = name.clone().unwrap_or_else(|| spec.info.title.to_snake_case());
+        let n = name
+            .clone()
+            .unwrap_or_else(|| spec.info.title.to_snake_case());
         format!("{}.v1", n.to_snake_case().replace('_', ""))
     })
 }
 
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")))
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
         .init();
 
     match Cli::parse().command {
@@ -81,7 +91,13 @@ fn main() -> Result<()> {
             let pkg = pkg_of(&api, &None, &package);
             print!("{}", proto::emit(&api, &pkg));
         }
-        Command::Generate { spec, output, package, name, no_serde } => {
+        Command::Generate {
+            spec,
+            output,
+            package,
+            name,
+            no_serde,
+        } => {
             let api = load(&spec)?;
             let pkg = pkg_of(&api, &name, &package);
             let serde = !no_serde;
@@ -91,7 +107,8 @@ fn main() -> Result<()> {
 
             // 1. the typed .proto.
             let proto_dir = output.join("proto");
-            std::fs::create_dir_all(&proto_dir).with_context(|| format!("mkdir {}", proto_dir.display()))?;
+            std::fs::create_dir_all(&proto_dir)
+                .with_context(|| format!("mkdir {}", proto_dir.display()))?;
             std::fs::write(proto_dir.join(&proto_filename), proto::emit(&api, &pkg))
                 .with_context(|| format!("writing proto/{proto_filename}"))?;
 
@@ -99,9 +116,11 @@ fn main() -> Result<()> {
             for file in scaffold::scaffold(&api, &pkg, &crate_name, &proto_filename, serde) {
                 let path = output.join(&file.path);
                 if let Some(parent) = path.parent() {
-                    std::fs::create_dir_all(parent).with_context(|| format!("mkdir {}", parent.display()))?;
+                    std::fs::create_dir_all(parent)
+                        .with_context(|| format!("mkdir {}", parent.display()))?;
                 }
-                std::fs::write(&path, file.contents).with_context(|| format!("writing {}", path.display()))?;
+                std::fs::write(&path, file.contents)
+                    .with_context(|| format!("writing {}", path.display()))?;
             }
 
             tracing::info!(

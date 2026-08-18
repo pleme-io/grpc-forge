@@ -32,11 +32,26 @@ pub struct File {
 /// `serde` wires pbjson so the generated messages are serde-(de)serializable
 /// (the JSON↔typed bridge); `false` emits a minimal prost-only crate.
 #[must_use]
-pub fn scaffold(spec: &OpenApiSpec, package: &str, crate_name: &str, proto_filename: &str, serde: bool) -> Vec<File> {
+pub fn scaffold(
+    spec: &OpenApiSpec,
+    package: &str,
+    crate_name: &str,
+    proto_filename: &str,
+    serde: bool,
+) -> Vec<File> {
     vec![
-        File { path: "Cargo.toml".into(), contents: cargo_toml(crate_name, serde) },
-        File { path: "build.rs".into(), contents: build_rs(proto_filename, package, serde) },
-        File { path: "src/lib.rs".into(), contents: lib_rs(spec, package, serde) },
+        File {
+            path: "Cargo.toml".into(),
+            contents: cargo_toml(crate_name, serde),
+        },
+        File {
+            path: "build.rs".into(),
+            contents: build_rs(proto_filename, package, serde),
+        },
+        File {
+            path: "src/lib.rs".into(),
+            contents: lib_rs(spec, package, serde),
+        },
     ]
 }
 
@@ -241,7 +256,11 @@ components:
     }
 
     fn contents_of(path: &str, serde: bool) -> String {
-        files(serde).into_iter().find(|f| f.path == path).unwrap().contents
+        files(serde)
+            .into_iter()
+            .find(|f| f.path == path)
+            .unwrap()
+            .contents
     }
 
     #[test]
@@ -313,7 +332,10 @@ components:
     fn build_rs_has_protoc_fallback_in_both_modes() {
         for serde in [true, false] {
             let b = contents_of("build.rs", serde);
-            assert!(b.contains("protoc_bin_vendored::protoc_bin_path()"), "serde={serde}");
+            assert!(
+                b.contains("protoc_bin_vendored::protoc_bin_path()"),
+                "serde={serde}"
+            );
         }
     }
 }
