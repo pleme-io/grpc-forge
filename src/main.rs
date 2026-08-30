@@ -7,7 +7,7 @@
 //! By default the messages are serde-capable (pbjson) so a `serde_json::Value`
 //! data layer bridges to typed gRPC for free; `--no-serde` emits a prost-only crate.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -58,16 +58,6 @@ enum Command {
     },
 }
 
-fn load(path: &Path) -> Result<sekkei::OpenApiSpec> {
-    let content = std::fs::read_to_string(path)
-        .with_context(|| format!("reading spec {}", path.display()))?;
-    if path.extension().is_some_and(|e| e == "json") {
-        Ok(serde_json::from_str(&content)?)
-    } else {
-        Ok(serde_yaml_ng::from_str(&content)?)
-    }
-}
-
 fn pkg_of(spec: &sekkei::OpenApiSpec, name: &Option<String>, package: &Option<String>) -> String {
     package.clone().unwrap_or_else(|| {
         let n = name
@@ -87,7 +77,7 @@ fn main() -> Result<()> {
 
     match Cli::parse().command {
         Command::Proto { spec, package } => {
-            let api = load(&spec)?;
+            let api = sekkei::load_spec(&spec)?;
             let pkg = pkg_of(&api, &None, &package);
             print!("{}", proto::emit(&api, &pkg));
         }
@@ -98,7 +88,7 @@ fn main() -> Result<()> {
             name,
             no_serde,
         } => {
-            let api = load(&spec)?;
+            let api = sekkei::load_spec(&spec)?;
             let pkg = pkg_of(&api, &name, &package);
             let serde = !no_serde;
             let stem = pkg.split('.').next().unwrap_or("api");
